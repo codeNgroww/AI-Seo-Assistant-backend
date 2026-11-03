@@ -37,10 +37,27 @@ describe('SeoService (Safety & Approval Workflow)', () => {
       expect(draft.auditTrail[0].action).toBe('GENERATED');
     });
 
-    it('should scrub PII from outbound prompt before sending to LLM', async () => {
+    it('should THROW A CLEAR SECURITY ERROR when customer PII (email, phone, card) is detected in input', async () => {
+      await expect(
+        service.generate({
+          pageTitle: 'VIP Lounge Booking at Space42',
+          pageDescription: 'Contact organizer at john.doe@vip-arena.ae or call +971-50-9876543 for bookings.',
+        })
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.generate({
+          pageTitle: 'VIP Lounge Booking at Space42',
+          pageDescription: 'Contact organizer at john.doe@vip-arena.ae or call +971-50-9876543 for bookings.',
+        })
+      ).rejects.toThrow(/Security Policy Alert: Input contains protected confidential customer data/);
+    });
+
+    it('should allow generation if allowRedact flag is explicitly provided', async () => {
       const draft = await service.generate({
         pageTitle: 'VIP Lounge Booking at Space42',
         pageDescription: 'Contact organizer at john.doe@vip-arena.ae or call +971-50-9876543 for bookings.',
+        allowRedact: true,
       });
 
       expect(draft.safetyReport?.piiRedacted).toBe(true);

@@ -20,26 +20,37 @@ export class SeoService {
 
   /**
    * Generates AI SEO suggestions and initializes a new draft in DRAFT status.
+   * Throws an error message if confidential customer data (phone, email, cards, tokens) is present.
    */
   async generate(dto: GenerateSeoDto, actor = 'Space42 Admin'): Promise<SeoDraft> {
     this.logger.log(`Initiating SEO generation for: "${dto.pageTitle}" by ${actor}`);
 
-    // 1. Outbound PII Sanitization
+    const combinedSource = `${dto.pageTitle} ${dto.pageDescription}`;
+
+    // 1. PII & Confidential Data Guard: Check for phone numbers, emails, cards, IDs
+    const piiDetection = this.piiSanitizer.detect(combinedSource);
+    if (piiDetection.hasPii && !dto.allowRedact) {
+      throw new BadRequestException(
+        `Security Policy Alert: Input contains protected confidential customer data (${piiDetection.details.join('; ')}). ` +
+        `Phone numbers, emails, and card tokens are protected and cannot be sent to the AI engine. Please remove them before proceeding.`
+      );
+    }
+
+    // 2. Outbound Sanitization (if allowed or as defense-in-depth)
     const titleSanitized = this.piiSanitizer.sanitize(dto.pageTitle);
     const descSanitized = this.piiSanitizer.sanitize(dto.pageDescription);
     const totalRedactions = titleSanitized.redactedCount + descSanitized.redactedCount;
 
-    // 2. Invoke LLM Provider
+    // 3. Invoke LLM Provider
     const generated: SeoContent = await this.mockLlmProvider.generateSeo({
       pageTitle: titleSanitized.sanitizedText,
       sanitizedDescription: descSanitized.sanitizedText,
     });
 
-    // 3. Post-generation Accuracy & Hallucination verification
-    const combinedSource = `${dto.pageTitle} ${dto.pageDescription}`;
+    // 4. Post-generation Accuracy & Hallucination verification
     const accuracyResult = this.accuracyGuard.checkAccuracy(generated, combinedSource);
 
-    // 4. Construct Audit Trail
+    // 5. Construct Audit Trail
     const initialAudit: AuditLogEntry = {
       id: `audit_${Date.now()}_1`,
       timestamp: new Date().toISOString(),
@@ -48,7 +59,7 @@ export class SeoService {
       notes: `AI generated initial SEO suggestions. PII redactions: ${totalRedactions}. Status initialized to DRAFT.`,
     };
 
-    // 5. Create Draft with strict DRAFT status
+    // 6. Create Draft with strict DRAFT status
     const draftId = `seo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
@@ -213,6 +224,15 @@ export class SeoService {
       throw new BadRequestException('Cannot regenerate a PUBLISHED draft directly.');
     }
 
+    const combinedSource = `${existing.pageTitle} ${existing.pageDescription}`;
+    const piiDetection = this.piiSanitizer.detect(combinedSource);
+    if (piiDetection.hasPii) {
+      throw new BadRequestException(
+        `Security Policy Alert: Input contains protected confidential customer data (${piiDetection.details.join('; ')}). ` +
+        `Phone numbers, emails, and card tokens are protected and cannot be sent to the AI engine.`
+      );
+    }
+
     const titleSanitized = this.piiSanitizer.sanitize(existing.pageTitle);
     const descSanitized = this.piiSanitizer.sanitize(existing.pageDescription);
 
@@ -221,7 +241,6 @@ export class SeoService {
       sanitizedDescription: descSanitized.sanitizedText,
     });
 
-    const combinedSource = `${existing.pageTitle} ${existing.pageDescription}`;
     const accuracyResult = this.accuracyGuard.checkAccuracy(generated, combinedSource);
 
     const auditEntry: AuditLogEntry = {
